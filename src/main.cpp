@@ -11,15 +11,25 @@
 int accelValue;
 byte speedValue;
 
-
-
+///
+/// This method writes data to two Dais-Chain connected MCP4xxxx via SPI.
+///     1. Setting LOW on CS taking control over MCP4xxxx and force them listen
+///     2. We send data for second MCP4xxxx, it will be stored in first MCP4xxxx
+///     3. We send data for first MCP4xxxx, previous data will be pushed to second MCP4xxxx
+///     and first one will get it's own data
+///     4. Setting HIGH on CS releases MCP4xxxx so both of them can act
+/// \param address1
+/// \param address2
+/// \param val1
+/// \param val2
+///
 void MCP4xxxxDaisyChainWrite(byte address1, byte address2, byte val1, byte val2) {
-  digitalWrite(PIN_CS, LOW);                    // включаем прием данных микросхемой
-  SPI.transfer(address2); // NOLINT             // отправляем первый байт в регистр конфигурации
-  SPI.transfer(val2); // NOLINT                 // отправляем второй байт в "регистр ползунка"
-  SPI.transfer(address1); // NOLINT             // отправляем первый байт в регистр конфигурации
-  SPI.transfer(val1); // NOLINT                 // отправляем второй байт в "регистр ползунка"
-  digitalWrite(PIN_CS, HIGH);                   // выключаем прием данных микросхемой
+  digitalWrite(PIN_CS, LOW);
+  SPI.transfer(address2); // NOLINT
+  SPI.transfer(val2); // NOLINT
+  SPI.transfer(address1); // NOLINT
+  SPI.transfer(val1); // NOLINT
+  digitalWrite(PIN_CS, HIGH);
 }
 
 byte getSpeed(int accel) {
