@@ -11,10 +11,14 @@
 int accelValue;
 byte speedValue;
 
-void MCP4xxxxWrite(byte address, byte val) {
+
+
+void MCP4xxxxDaisyChainWrite(byte address1, byte address2, byte val1, byte val2) {
   digitalWrite(PIN_CS, LOW);                    // включаем прием данных микросхемой
-  SPI.transfer(address); // NOLINT              // отправляем первый байт в регистр конфигурации
-  SPI.transfer(val); // NOLINT                  // отправляем второй байт в "регистр ползунка"
+  SPI.transfer(address2); // NOLINT             // отправляем первый байт в регистр конфигурации
+  SPI.transfer(val2); // NOLINT                 // отправляем второй байт в "регистр ползунка"
+  SPI.transfer(address1); // NOLINT             // отправляем первый байт в регистр конфигурации
+  SPI.transfer(val1); // NOLINT                 // отправляем второй байт в "регистр ползунка"
   digitalWrite(PIN_CS, HIGH);                   // выключаем прием данных микросхемой
 }
 
@@ -35,7 +39,7 @@ void setup() {
 void loop() {
   accelValue = analogRead(PIN_ACCEL);
   speedValue = getSpeed(accelValue);
-  MCP4xxxxWrite(POTENTIOMETER_SLOT_0_ADDRESS, speedValue);
-  MCP4xxxxWrite(POTENTIOMETER_SLOT_1_ADDRESS, speedValue);
+  MCP4xxxxDaisyChainWrite(POTENTIOMETER_SLOT_0_ADDRESS, POTENTIOMETER_SLOT_0_ADDRESS, speedValue, speedValue);
+  MCP4xxxxDaisyChainWrite(POTENTIOMETER_SLOT_1_ADDRESS, POTENTIOMETER_SLOT_1_ADDRESS, speedValue, speedValue);
   delay(50);
 }
