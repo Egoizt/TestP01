@@ -1,0 +1,33 @@
+cmake_minimum_required(VERSION 3.8)
+
+project(TestP01 LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+
+#set(CMAKE_VERBOSE_MAKEFILE ON)
+
+# This is a fix for PID and VID is missing for Leaonardo
+# Taken from https://github.com/queezythegreat/arduino-cmake/issues/54
+add_definitions(-DUSB_VID=0x2341)
+add_definitions(-DUSB_PID=0x8036)
+
+get_board_id(board_id leonardo)
+
+add_arduino_executable(main ${board_id} src/main.cpp)
+link_platform_library(main SPI ${board_id})
+
+# Doesn't work due to uninvestigated configuration problem, so using custom target below
+#upload_arduino_target(main ${board_id} /dev/cu.usbmodem14201)
+
+add_custom_target(
+        Upload ALL
+        DEPENDS main
+)
+
+add_custom_command(
+        TARGET  Upload
+        WORKING_DIRECTORY ${PROJECT_BINARY_DIR}
+        COMMAND stty -f /dev/tty.usbmodem14101 ispeed 1200 ospeed 1200
+        COMMAND sleep 1 #This one forces stty to finish work before avrdude comes in
+        COMMAND avrdude -patmega32u4 -cavr109 -v -v -v -v -P/dev/cu.usbmodem14101 -b57600 -D -Uflash:w:main.hex:i
+)
