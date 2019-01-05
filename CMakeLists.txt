@@ -28,6 +28,6 @@ add_custom_command(
         TARGET  Upload
         WORKING_DIRECTORY ${PROJECT_BINARY_DIR}
         COMMAND stty -f /dev/tty.usbmodem14101 ispeed 1200 ospeed 1200
-        COMMAND sleep 1 #This one forces stty to finish work before avrdude comes in
+        COMMAND sleep 2 #This one forces stty to finish work before avrdude comes in
         COMMAND avrdude -patmega32u4 -cavr109 -v -v -v -v -P/dev/cu.usbmodem14101 -b57600 -D -Uflash:w:main.hex:i
 )

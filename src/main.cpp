@@ -3,20 +3,29 @@
 
 #define PIN_CS 10 //Chip-select pin for hardware SPI
 #define PIN_ACCELERATION A0
-#define PIN_STEERING A1
+#define PIN_BRAKE A1
+#define PIN_STEERING A2
 
 #define POTENTIOMETER_LEFT_ADDRESS 0b00010001
 #define POTENTIOMETER_RIGHT_ADDRESS 0b00010010
 //#define POTENTIOMETER_SLOT_ALL_ADDRESS 0b00010011
 
 const byte MAX_BYTE = 255;
+const double MIN_BRAKE = 0.02f;
+const double SETSPEED_DEADZONE_HIGH = 253.0f;
+const double SETSPEED_DEADZONE_HIGH_VALUE = 255.0f;
+const double SETSPEED_DEADZONE_LOW = 3.0f;
+const double SETSPEED_DEADZONE_LOW_VALUE = 0.0f;
+const double MIN_SPEED_DELTA = 0.01f;
 
 int accelerationRate;
+int brakingRate;
 int steeringValue;
-byte currentSetSpeed = 0;
+byte currentSetResistance = 0;
 double currentTrueSetSpeed = 0.0f;
-double accelerationSmoothness = 0.05f;
-double naturalSlowdownSmoothness = 0.5f;
+double accelerationIntensity = 0.5f;
+double naturalSlowdownIntensity = 0.001f;
+double brakingSlowdownEfficiency = 0.1f;
 
 ///
 /// This method writes data to two Dais-Chain connected MCP4xxxx via SPI.
@@ -25,10 +34,6 @@ double naturalSlowdownSmoothness = 0.5f;
 ///     3. We send data for first MCP4xxxx, previous data will be pushed to second MCP4xxxx
 ///     and first one will get it's own data
 ///     4. Setting HIGH on CS releases MCP4xxxx so both of them can act
-/// \param address_front
-/// \param address_rear
-/// \param value_front
-/// \param value_rear
 ///
 void MCP4xxxxDaisyChainWrite(byte address_front, byte address_rear, byte value_front, byte value_rear) {
   digitalWrite(PIN_CS, LOW);
@@ -39,19 +44,62 @@ void MCP4xxxxDaisyChainWrite(byte address_front, byte address_rear, byte value_f
   digitalWrite(PIN_CS, HIGH);
 }
 
-double GetTargetSpeedFromAccellerationRate(int acceleration_rate) {
+///
+/// Takes in acceleration rate, which is inverted analog pin PIN_ACCELERATION value
+/// It is inverted because we need rate of pedal pressed
+/// Higher pedal is pressed, lower the input current and vice versa
+/// This one returns Target Speed that we want to achieve pressing gas pedal
+///
+inline double GetTargetSpeedFromAccellerationRate(int acceleration_rate) {
   return ((acceleration_rate)/1023.0f)*255.0f;
 }
 
-double GetNewCurrentSpeed(int acceleration_rate, double current_speed, double acceleration_smoothness,
-    double natural_slowdown_smoothness) {
-  double target = GetTargetSpeedFromAccellerationRate(acceleration_rate);
-  double new_current;
-  if (target < current_speed) {
-    new_current = current_speed - (current_speed - target) * natural_slowdown_smoothness;
+///
+/// Takes in braking rate, which is inverted analog pin PIN_BRAKE value
+/// It is inverted because we need rate of pedal pressed
+///
+inline double GetBrakingIntensityFromBrakingRate(int braking_rate) {
+  return (braking_rate/1023.0f);
+}
+
+///
+/// Takes in speed and returns speed limited by deadzones
+///
+inline double GetTargetSpeedDeadzoned(double speed) {
+  if (speed > SETSPEED_DEADZONE_HIGH) {
+    return SETSPEED_DEADZONE_HIGH_VALUE;
   }
-  else if (target > current_speed) {
-    new_current = current_speed + (target - current_speed) * acceleration_smoothness;
+  else if (speed < SETSPEED_DEADZONE_LOW) {
+    return SETSPEED_DEADZONE_LOW_VALUE;
+  } else
+    return speed;
+}
+
+///
+/// Takes a number of parameters and calculated new current speed
+///
+double GetNewCurrentSpeed(int acceleration_rate, int braking_rate, double current_speed,
+    double acceleration_intensity, double natural_slowdown_intensity, double braking_slowdown_efficiency) {
+  double target_speed_acl = GetTargetSpeedDeadzoned(GetTargetSpeedFromAccellerationRate(acceleration_rate));
+  double braking_intensity = GetBrakingIntensityFromBrakingRate(braking_rate);
+  double new_current;
+  double speed_delta_by_acl = abs(target_speed_acl - current_speed);
+  if ((braking_intensity > MIN_BRAKE) && (current_speed > 0.0f)) {
+    new_current = current_speed - current_speed * braking_intensity * braking_slowdown_efficiency;
+  }
+  else if (target_speed_acl < current_speed) {
+    if (speed_delta_by_acl > MIN_SPEED_DELTA) {
+      new_current = current_speed - speed_delta_by_acl * natural_slowdown_intensity;
+    } else {
+      new_current = current_speed - speed_delta_by_acl;
+    }
+  }
+  else if (target_speed_acl > current_speed) {
+    if (speed_delta_by_acl > MIN_SPEED_DELTA) {
+      new_current = current_speed + speed_delta_by_acl * acceleration_intensity;
+    } else {
+      new_current = current_speed + speed_delta_by_acl;
+    }
   }
   else
     new_current = current_speed;
@@ -71,16 +119,20 @@ void setup() {
   pinMode(PIN_CS, OUTPUT);
   SPI.begin(); // NOLINT
   pinMode(PIN_ACCELERATION, INPUT);
+  pinMode(PIN_BRAKE, INPUT);
   pinMode(PIN_STEERING, INPUT);
 }
 
 void loop() {
   accelerationRate = InvertAnalogPinValue(analogRead(PIN_ACCELERATION));
+  brakingRate = InvertAnalogPinValue(analogRead(PIN_BRAKE));
   steeringValue = analogRead(PIN_STEERING);
-  currentTrueSetSpeed = GetNewCurrentSpeed(accelerationRate, currentTrueSetSpeed, accelerationSmoothness,
-      naturalSlowdownSmoothness);
-  currentSetSpeed = InvertByte((byte)currentTrueSetSpeed);
-  MCP4xxxxDaisyChainWrite(POTENTIOMETER_LEFT_ADDRESS, POTENTIOMETER_LEFT_ADDRESS, currentSetSpeed, currentSetSpeed);
-  MCP4xxxxDaisyChainWrite(POTENTIOMETER_RIGHT_ADDRESS, POTENTIOMETER_RIGHT_ADDRESS, currentSetSpeed, currentSetSpeed);
-  delay(50);
+  currentTrueSetSpeed = GetNewCurrentSpeed(accelerationRate, brakingRate, currentTrueSetSpeed, accelerationIntensity,
+      naturalSlowdownIntensity, brakingSlowdownEfficiency);
+  currentSetResistance = InvertByte((byte)ceil(currentTrueSetSpeed));
+  MCP4xxxxDaisyChainWrite(POTENTIOMETER_LEFT_ADDRESS, POTENTIOMETER_LEFT_ADDRESS, currentSetResistance,
+      currentSetResistance);
+  MCP4xxxxDaisyChainWrite(POTENTIOMETER_RIGHT_ADDRESS, POTENTIOMETER_RIGHT_ADDRESS, currentSetResistance,
+      currentSetResistance);
+  delay(30);
 }
