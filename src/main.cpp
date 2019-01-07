@@ -12,10 +12,10 @@
 
 const byte MAX_BYTE = 255;
 const double MIN_BRAKE = 0.02f;
-const double SETSPEED_DEADZONE_HIGH = 253.0f;
-const double SETSPEED_DEADZONE_HIGH_VALUE = 255.0f;
-const double SETSPEED_DEADZONE_LOW = 3.0f;
-const double SETSPEED_DEADZONE_LOW_VALUE = 0.0f;
+const double TRUESPEED_DEADZONE_HIGH = 253.0f;
+const double TRUESPEED_DEADZONE_HIGH_VALUE = 255.0f;
+const double TRUESPEED_DEADZONE_LOW = 3.0f;
+const double TRUESPEED_DEADZONE_LOW_VALUE = 0.0f;
 const double MIN_SPEED_DELTA = 0.01f;
 
 int accelerationRate;
@@ -65,12 +65,13 @@ inline double GetBrakingIntensityFromBrakingRate(int braking_rate) {
 ///
 /// Takes in speed and returns speed limited by deadzones
 ///
-inline double GetTargetSpeedDeadzoned(double speed) {
-  if (speed > SETSPEED_DEADZONE_HIGH) {
-    return SETSPEED_DEADZONE_HIGH_VALUE;
+inline double GetTrueSetSpeedDeadzoned(double speed, double deadzone_min, double deadzone_min_value,
+    double deadzone_max, double deadzone_max_value) {
+  if (speed > deadzone_max) {
+    return deadzone_max_value;
   }
-  else if (speed < SETSPEED_DEADZONE_LOW) {
-    return SETSPEED_DEADZONE_LOW_VALUE;
+  else if (speed < deadzone_min) {
+    return deadzone_min_value;
   } else
     return speed;
 }
@@ -80,7 +81,7 @@ inline double GetTargetSpeedDeadzoned(double speed) {
 ///
 double GetNewCurrentSpeed(int acceleration_rate, int braking_rate, double current_speed,
     double acceleration_intensity, double natural_slowdown_intensity, double braking_slowdown_efficiency) {
-  double target_speed_acl = GetTargetSpeedDeadzoned(GetTargetSpeedFromAccellerationRate(acceleration_rate));
+  double target_speed_acl = GetTargetSpeedFromAccellerationRate(acceleration_rate);
   double braking_intensity = GetBrakingIntensityFromBrakingRate(braking_rate);
   double new_current;
   double speed_delta_by_acl = abs(target_speed_acl - current_speed);
@@ -129,7 +130,12 @@ void loop() {
   steeringValue = analogRead(PIN_STEERING);
   currentTrueSetSpeed = GetNewCurrentSpeed(accelerationRate, brakingRate, currentTrueSetSpeed, accelerationIntensity,
       naturalSlowdownIntensity, brakingSlowdownEfficiency);
-  currentSetResistance = InvertByte((byte)ceil(currentTrueSetSpeed));
+  currentSetResistance = InvertByte((byte)ceil(GetTrueSetSpeedDeadzoned(currentTrueSetSpeed,
+                                                                        TRUESPEED_DEADZONE_LOW,
+                                                                        TRUESPEED_DEADZONE_LOW_VALUE,
+                                                                        TRUESPEED_DEADZONE_HIGH,
+                                                                        TRUESPEED_DEADZONE_HIGH_VALUE)));
+  Serial.println(currentSetResistance);
   MCP4xxxxDaisyChainWrite(POTENTIOMETER_LEFT_ADDRESS, POTENTIOMETER_LEFT_ADDRESS, currentSetResistance,
       currentSetResistance);
   MCP4xxxxDaisyChainWrite(POTENTIOMETER_RIGHT_ADDRESS, POTENTIOMETER_RIGHT_ADDRESS, currentSetResistance,
