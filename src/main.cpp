@@ -4,7 +4,13 @@
 #define PIN_CS 10 //Chip-select pin for hardware SPI
 #define PIN_ACCELERATION A0
 #define PIN_BRAKE A1
-#define PIN_STEERING A2
+#define PIN_STEERING_WHEEL_ANGLE A2
+#define PIN_STEERING_RACK_ANGLE A3
+#define PIN_STEERING_STEPPER_ENABLE 9
+#define PIN_STEERING_STEPPER_DIRECTION 8
+#define PIN_STEERING_STEPPER_STEP 7
+#define PIN_STEERING_STEPPER_SLEEP 6
+#define PIN_STEERING_STEPPER_RESET 5
 
 #define POTENTIOMETER_LEFT_ADDRESS 0b00010001
 #define POTENTIOMETER_RIGHT_ADDRESS 0b00010010
@@ -17,15 +23,20 @@ const double TRUESPEED_DEADZONE_HIGH_VALUE = 255.0f;
 const double TRUESPEED_DEADZONE_LOW = 3.0f;
 const double TRUESPEED_DEADZONE_LOW_VALUE = 0.0f;
 const double MIN_SPEED_DELTA = 0.01f;
+const double FRAME = 30.0f;
 
-int accelerationRate;
-int brakingRate;
-int steeringValue;
-byte currentSetResistance = 0;
-double currentTrueSetSpeed = 0.0f;
-double accelerationIntensity = 0.5f;
-double naturalSlowdownIntensity = 0.001f;
-double brakingSlowdownEfficiency = 0.1f;
+unsigned long up_time = 0;
+unsigned long fresh_up_time = 0;
+unsigned long tick = 0;
+int acceleration_rate;
+int braking_rate;
+int steering_wheel_value;
+int steering_rack_value;
+byte current_set_resistance = 0;
+double current_true_set_speed = 0.0f;
+double acceleration_intensity = 0.5f;
+double natural_slowdown_intensity = 0.001f;
+double braking_slowdown_efficiency = 0.1f;
 
 ///
 /// This method writes data to two Dais-Chain connected MCP4xxxx via SPI.
@@ -115,30 +126,62 @@ byte InvertByte(byte value) {
   return MAX_BYTE - value;
 }
 
+inline void Tick() {
+  fresh_up_time = millis();
+  tick = fresh_up_time - up_time;
+  up_time = fresh_up_time;
+}
+
+double GetAccelerationIntensity() {
+  return (acceleration_intensity/FRAME)*tick;
+}
+
+double GetNaturalSlowdownIntensity() {
+  return (natural_slowdown_intensity/FRAME)*tick;
+}
+
+double GetBrakingSlowdownEfficiency() {
+  return (acceleration_intensity/FRAME)*tick;
+}
+
 void setup() {
   Serial.begin(115200);
   pinMode(PIN_CS, OUTPUT);
   SPI.begin(); // NOLINT
   pinMode(PIN_ACCELERATION, INPUT);
   pinMode(PIN_BRAKE, INPUT);
-  pinMode(PIN_STEERING, INPUT);
+  pinMode(PIN_STEERING_WHEEL_ANGLE, INPUT);
+  pinMode(PIN_STEERING_RACK_ANGLE, INPUT);
+  pinMode(PIN_STEERING_STEPPER_ENABLE, OUTPUT);
+  pinMode(PIN_STEERING_STEPPER_DIRECTION, OUTPUT);
+  pinMode(PIN_STEERING_STEPPER_STEP, OUTPUT);
+  pinMode(PIN_STEERING_STEPPER_SLEEP, OUTPUT);
+  pinMode(PIN_STEERING_STEPPER_RESET, OUTPUT);
+  digitalWrite(PIN_STEERING_STEPPER_RESET, HIGH);
+  digitalWrite(PIN_STEERING_STEPPER_SLEEP, HIGH);
+  digitalWrite(PIN_STEERING_STEPPER_ENABLE, LOW);
+  Tick();
 }
 
 void loop() {
-  accelerationRate = InvertAnalogPinValue(analogRead(PIN_ACCELERATION));
-  brakingRate = InvertAnalogPinValue(analogRead(PIN_BRAKE));
-  steeringValue = analogRead(PIN_STEERING);
-  currentTrueSetSpeed = GetNewCurrentSpeed(accelerationRate, brakingRate, currentTrueSetSpeed, accelerationIntensity,
-      naturalSlowdownIntensity, brakingSlowdownEfficiency);
-  currentSetResistance = InvertByte((byte)ceil(GetTrueSetSpeedDeadzoned(currentTrueSetSpeed,
+  acceleration_rate = InvertAnalogPinValue(analogRead(PIN_ACCELERATION));
+  braking_rate = InvertAnalogPinValue(analogRead(PIN_BRAKE));
+  steering_wheel_value = analogRead(PIN_STEERING_WHEEL_ANGLE);
+  steering_rack_value = analogRead(PIN_STEERING_RACK_ANGLE);
+//  Serial.print(steering_wheel_value);
+//  Serial.print(" - ");
+//  Serial.println(steering_rack_value);
+  current_true_set_speed = GetNewCurrentSpeed(acceleration_rate, braking_rate, current_true_set_speed,
+          GetAccelerationIntensity(), GetNaturalSlowdownIntensity(), GetBrakingSlowdownEfficiency());
+  current_set_resistance = InvertByte((byte)ceil(GetTrueSetSpeedDeadzoned(current_true_set_speed,
                                                                         TRUESPEED_DEADZONE_LOW,
                                                                         TRUESPEED_DEADZONE_LOW_VALUE,
                                                                         TRUESPEED_DEADZONE_HIGH,
                                                                         TRUESPEED_DEADZONE_HIGH_VALUE)));
-  Serial.println(currentSetResistance);
-  MCP4xxxxDaisyChainWrite(POTENTIOMETER_LEFT_ADDRESS, POTENTIOMETER_LEFT_ADDRESS, currentSetResistance,
-      currentSetResistance);
-  MCP4xxxxDaisyChainWrite(POTENTIOMETER_RIGHT_ADDRESS, POTENTIOMETER_RIGHT_ADDRESS, currentSetResistance,
-      currentSetResistance);
-  delay(30);
+  MCP4xxxxDaisyChainWrite(POTENTIOMETER_LEFT_ADDRESS, POTENTIOMETER_LEFT_ADDRESS, current_set_resistance,
+      current_set_resistance);
+  MCP4xxxxDaisyChainWrite(POTENTIOMETER_RIGHT_ADDRESS, POTENTIOMETER_RIGHT_ADDRESS, current_set_resistance,
+      current_set_resistance);
+  Tick();
+  Serial.println(tick);
 }
