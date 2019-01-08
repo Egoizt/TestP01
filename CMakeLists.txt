@@ -13,7 +13,7 @@ add_definitions(-DUSB_PID=0x8036)
 
 get_board_id(board_id leonardo)
 
-add_arduino_executable(${PROJECT_NAME} ${board_id} src/main.cpp)
+add_arduino_executable(${PROJECT_NAME} ${board_id} src/main.cpp src/SmoothAnalogReader.h src/SmoothAnalogReader.cpp)
 link_platform_library(${PROJECT_NAME} SPI ${board_id})
 
 # Doesn't work due to uninvestigated configuration problem.
