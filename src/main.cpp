@@ -1,16 +1,17 @@
 #include "Arduino.h"
 #include "SPI.h"
+#include "SmoothAnalogReader.h"
 
 #define PIN_CS 10 //Chip-select pin for hardware SPI
 #define PIN_ACCELERATION A0
 #define PIN_BRAKE A1
 #define PIN_STEERING_WHEEL_ANGLE A2
 #define PIN_STEERING_RACK_ANGLE A3
-#define PIN_STEERING_STEPPER_ENABLE 9
-#define PIN_STEERING_STEPPER_DIRECTION 8
-#define PIN_STEERING_STEPPER_STEP 7
-#define PIN_STEERING_STEPPER_SLEEP 6
-#define PIN_STEERING_STEPPER_RESET 5
+#define PIN_STEERING_STEPPER_ENABLE 8
+#define PIN_STEERING_STEPPER_DIRECTION 7
+#define PIN_STEERING_STEPPER_STEP 6
+#define PIN_STEERING_STEPPER_SLEEP 5
+#define PIN_STEERING_STEPPER_RESET 4
 
 #define POTENTIOMETER_LEFT_ADDRESS 0b00010001
 #define POTENTIOMETER_RIGHT_ADDRESS 0b00010010
@@ -28,10 +29,15 @@ const double FRAME = 30.0f;
 unsigned long up_time = 0;
 unsigned long fresh_up_time = 0;
 unsigned long tick = 0;
-int acceleration_rate;
-int braking_rate;
-int steering_wheel_value;
-int steering_rack_value;
+SmoothAnalogReader accelerator(PIN_ACCELERATION);
+SmoothAnalogReader brakes(PIN_BRAKE);
+SmoothAnalogReader steering_wheel(PIN_STEERING_WHEEL_ANGLE);
+SmoothAnalogReader steering_rack(PIN_STEERING_RACK_ANGLE);
+int acceleration_rate = 0;
+int braking_rate = 0;
+int steering_wheel_value = 0;
+int steering_rack_value = 0;
+int steering_delta = 0;
 byte current_set_resistance = 0;
 double current_true_set_speed = 0.0f;
 double acceleration_intensity = 0.5f;
@@ -39,12 +45,12 @@ double natural_slowdown_intensity = 0.001f;
 double braking_slowdown_efficiency = 0.1f;
 
 ///
-/// This method writes data to two Dais-Chain connected MCP4xxxx via SPI.
-///     1. Setting LOW on CS taking control over MCP4xxxx and force them listen
-///     2. We send data for second MCP4xxxx, it will be stored in first MCP4xxxx
-///     3. We send data for first MCP4xxxx, previous data will be pushed to second MCP4xxxx
-///     and first one will get it's own data
-///     4. Setting HIGH on CS releases MCP4xxxx so both of them can act
+/// This method writes data to two Daisy-Chain connected MCP4xxxx via SPI.
+///     1. Setting LOW on CS to take control over MCP4xxxx and force both of them to listen
+///     2. Sending data for second MCP4xxxx (it will be stored in first MCP4xxxx for now)
+///     3. Sending data for first MCP4xxxx (data stored in first MCP4xxxx will be pushed to the second MCP4xxxx
+///     and first one will get new data)
+///     4. Setting HIGH on CS to release MCP4xxxx's and let them act
 ///
 void MCP4xxxxDaisyChainWrite(byte address_front, byte address_rear, byte value_front, byte value_rear) {
   digitalWrite(PIN_CS, LOW);
@@ -61,7 +67,7 @@ void MCP4xxxxDaisyChainWrite(byte address_front, byte address_rear, byte value_f
 /// Higher pedal is pressed, lower the input current and vice versa
 /// This one returns Target Speed that we want to achieve pressing gas pedal
 ///
-inline double GetTargetSpeedFromAccellerationRate(int acceleration_rate) {
+inline __attribute__((always_inline)) double GetTargetSpeedFromAccellerationRate(int acceleration_rate) {
   return ((acceleration_rate)/1023.0f)*255.0f;
 }
 
@@ -69,14 +75,14 @@ inline double GetTargetSpeedFromAccellerationRate(int acceleration_rate) {
 /// Takes in braking rate, which is inverted analog pin PIN_BRAKE value
 /// It is inverted because we need rate of pedal pressed
 ///
-inline double GetBrakingIntensityFromBrakingRate(int braking_rate) {
+inline __attribute__((always_inline)) double GetBrakingIntensityFromBrakingRate(int braking_rate) {
   return (braking_rate/1023.0f);
 }
 
 ///
 /// Takes in speed and returns speed limited by deadzones
 ///
-inline double GetTrueSetSpeedDeadzoned(double speed, double deadzone_min, double deadzone_min_value,
+inline __attribute__((always_inline)) double GetTrueSetSpeedDeadzoned(double speed, double deadzone_min, double deadzone_min_value,
     double deadzone_max, double deadzone_max_value) {
   if (speed > deadzone_max) {
     return deadzone_max_value;
@@ -126,7 +132,7 @@ byte InvertByte(byte value) {
   return MAX_BYTE - value;
 }
 
-inline void Tick() {
+inline __attribute__((always_inline)) void Tick() {
   fresh_up_time = millis();
   tick = fresh_up_time - up_time;
   up_time = fresh_up_time;
@@ -141,7 +147,7 @@ double GetNaturalSlowdownIntensity() {
 }
 
 double GetBrakingSlowdownEfficiency() {
-  return (acceleration_intensity/FRAME)*tick;
+  return (braking_slowdown_efficiency/FRAME)*tick;
 }
 
 void setup() {
@@ -164,13 +170,10 @@ void setup() {
 }
 
 void loop() {
-  acceleration_rate = InvertAnalogPinValue(analogRead(PIN_ACCELERATION));
-  braking_rate = InvertAnalogPinValue(analogRead(PIN_BRAKE));
-  steering_wheel_value = analogRead(PIN_STEERING_WHEEL_ANGLE);
-  steering_rack_value = analogRead(PIN_STEERING_RACK_ANGLE);
-//  Serial.print(steering_wheel_value);
-//  Serial.print(" - ");
-//  Serial.println(steering_rack_value);
+  acceleration_rate = InvertAnalogPinValue(accelerator.ReadValue());
+  braking_rate = InvertAnalogPinValue(brakes.ReadValue());
+  steering_wheel_value = steering_wheel.ReadValue();
+  steering_rack_value = steering_rack.ReadValue();
   current_true_set_speed = GetNewCurrentSpeed(acceleration_rate, braking_rate, current_true_set_speed,
           GetAccelerationIntensity(), GetNaturalSlowdownIntensity(), GetBrakingSlowdownEfficiency());
   current_set_resistance = InvertByte((byte)ceil(GetTrueSetSpeedDeadzoned(current_true_set_speed,
@@ -182,6 +185,22 @@ void loop() {
       current_set_resistance);
   MCP4xxxxDaisyChainWrite(POTENTIOMETER_RIGHT_ADDRESS, POTENTIOMETER_RIGHT_ADDRESS, current_set_resistance,
       current_set_resistance);
+  steering_delta = steering_rack_value - steering_wheel_value;
+  if (steering_delta > 20) {
+    digitalWrite(PIN_STEERING_STEPPER_SLEEP, HIGH);
+    digitalWrite(PIN_STEERING_STEPPER_DIRECTION, LOW);
+    digitalWrite(PIN_STEERING_STEPPER_STEP, HIGH);
+    delayMicroseconds(500);
+    digitalWrite(PIN_STEERING_STEPPER_STEP, LOW);
+  }
+  else if (steering_delta < -20) {
+    digitalWrite(PIN_STEERING_STEPPER_SLEEP, HIGH);
+    digitalWrite(PIN_STEERING_STEPPER_DIRECTION, HIGH);
+    digitalWrite(PIN_STEERING_STEPPER_STEP, HIGH);
+    delayMicroseconds(500);
+    digitalWrite(PIN_STEERING_STEPPER_STEP, LOW);
+  } else {
+    digitalWrite(PIN_STEERING_STEPPER_SLEEP, LOW);
+  }
   Tick();
-  Serial.println(tick);
 }
